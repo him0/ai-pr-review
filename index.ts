@@ -16,7 +16,9 @@ const getPrDiff = async (): Promise<string> => {
   return diffResponse.data;
 };
 
-const getOpenAiReview = async (prompt: string): Promise<string | undefined> => {
+const getAiReviewContent = async (
+  prompt: string
+): Promise<string | undefined> => {
   const openai = new OpenAI({
     apiKey: OPENAI_API_KEY,
   });
@@ -68,7 +70,7 @@ const createIgnorePrReviewsPrompt = async (): Promise<string> => {
   return ignorePrompt;
 };
 
-const postReviewComments = async (reviewFiles: any) => {
+const postReviewComments = async (reviewFiles) => {
   const url = `${PR_API_URL}/commits`;
   const headers = {
     Authorization: `token ${GITHUB_TOKEN}`,
@@ -77,6 +79,7 @@ const postReviewComments = async (reviewFiles: any) => {
   const prCommitsResponse = await axios.get(url, { headers });
   const prCommits = prCommitsResponse.data;
   const lastCommit = prCommits[prCommits.length - 1].sha;
+
   for (const file of reviewFiles.files) {
     for (const review of file.reviews) {
       const commentUrl = `${PR_API_URL}/comments`;
@@ -84,9 +87,20 @@ const postReviewComments = async (reviewFiles: any) => {
         body: review.reviewComment,
         commit_id: lastCommit,
         path: file.fileName,
-        position: review.lineNumber,
+        line: parseInt(review.lineNumber),
       };
-      await axios.post(commentUrl, commentData, { headers });
+      try {
+        await axios.post(commentUrl, commentData, { headers });
+      } catch (error) {
+        console.error(
+          `Error posting comment: ${error.response?.status} ${error.response?.statusText}`
+        );
+        console.error(`Request data: ${JSON.stringify(commentData)}`);
+        // エラーレスポンスの詳細をログに出力
+        console.error(`Error details: ${error.response?.data?.message}`);
+        console.log(error.response?.data?.errors[0]);
+        console.log(error.response?.data?.errors[1]);
+      }
     }
   }
 };
@@ -94,8 +108,12 @@ const postReviewComments = async (reviewFiles: any) => {
 const main = async () => {
   const codeDiff = await getPrDiff();
   const prompt = createPrompt(codeDiff);
-  const reviewJson = await getOpenAiReview(prompt);
-  await postReviewComments(reviewJson);
+  const reviewJson = await getAiReviewContent(prompt);
+  if (!reviewJson) {
+    return;
+  }
+  const reviewFiles = JSON.parse(reviewJson);
+  await postReviewComments(reviewFiles);
 };
 
 main().catch(console.error);
